@@ -57,7 +57,42 @@ def minHimmelblau(x, steps):
         if step % 1000 == 0:
             print ('step {}: x = {}, f(x) = {}'.format(step, x.tolist(), f))
 
+def p66(steps):
+    x = torch.tensor([[1., 1., 1.], [2., 3., 1.], 
+            [3., 5., 1.], [4., 2., 1.], [5., 4., 1.]])
+    y = torch.tensor([-10., 12., 14., 16., 18.])
+    w = torch.zeros(3, requires_grad=True)
+    
+    criterion = torch.nn.MSELoss()
+    optimizer = torch.optim.Adam([w,],)
 
+    for step in range(steps):
+        pred = torch.mv(x, w)
+        loss = criterion(pred, y)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        if step % 1000 == 0:
+            print('step = {}, loss = {:g}, W = {}'.format(step, loss, w.tolist()))
+
+def p67(steps):
+    x = torch.tensor([[1., 1.], [2., 3.], [3., 5.], [4., 2.], [5., 4.]])
+    y = torch.tensor([-10., 12., 14., 16., 18.]).reshape(-1, 1)
+
+    fc = torch.nn.Linear(2, 1)
+    criterion = torch.nn.MSELoss()
+    optimizer = torch.optim.Adam(fc.parameters())
+    weights, bias = fc.parameters()
+
+    for step in range(steps):
+        pred = fc(x)
+        loss = criterion(pred, y)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        if step % 1000 == 0:
+            print('step = {}, loss = {:g}, weights = {}, bias={}'.\
+                  format(step, loss, weights[0, :].tolist(), bias.item()))
 
 
 

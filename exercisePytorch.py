@@ -3,11 +3,9 @@
 from math import pi
 import numpy as np
 import pandas as pd
-from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
-from matplotlib import cm
-from matplotlib.colors import LinearSegmentedColormap
 import torch
+import torch.nn as nn
 import torch.optim
 import torchvision.datasets
 import torchvision.transforms
@@ -227,5 +225,121 @@ def p89(steps):
             accuracy_test = n_correct_test / n_total_test
             print('训练集准确率 = {}, 测试集准确率 = {}'.format(accuracy_train, accuracy_test))
 
+def himmelblauTensor(x):
+    return (x[:,0] ** 2 + x[:,1] - 11) ** 2 + (x[:,0] + x[:,1] ** 2 - 7) ** 2
 
+def p105(seed, sample_num, train_num, validate_num, test_num, hidden_features, steps):
+    torch.manual_seed(seed=seed) # 固定随机数种子,这样生成的数据是确定的
+    features = torch.rand(sample_num, 2)  * 12 - 6 # 特征数据
+    noises = torch.randn(sample_num)
+    hims = himmelblauTensor(features) * 0.01
+    labels = hims + noises # 标签数据
+    
+    train_mse = torch.mean(noises[:train_num] ** 2)
+    validate_mse = torch.mean(noises[train_num:-test_num] ** 2)
+    test_mse = torch.mean(noises[-test_num:] ** 2)
+    print ('真实:训练集MSE = {:g}, 验证集MSE = {:g}, 测试集MSE = {:g}'.format(
+            train_mse, validate_mse, test_mse))
+
+    layers = [nn.Linear(2, hidden_features[0]),]
+    for idx, hidden_feature in enumerate(hidden_features):
+        layers.append(nn.Sigmoid())
+        next_hidden_feature = hidden_features[idx + 1] \
+                if idx + 1 < len(hidden_features) else 1
+        layers.append(nn.Linear(hidden_feature, next_hidden_feature))
+    net = nn.Sequential(*layers) # 前馈神经网络
+    print('神经网络为 {}'.format(net))
+
+    optimizer = torch.optim.Adam(net.parameters())
+    criterion = nn.MSELoss()
+
+    for step in range(steps):
+        outputs = net(features)
+        preds = outputs[:, 0]
+
+        loss_train = criterion(preds[:train_num],
+                labels[:train_num])
+        loss_validate = criterion(preds[train_num:-test_num],
+                labels[train_num:-test_num])
+        if step % 10000 == 0:
+            print ('#{} 训练集MSE = {:g}, 验证集MSE = {:g}'.format(
+                    step, loss_train, loss_validate))
+    
+        optimizer.zero_grad()
+        loss_train.backward()
+        optimizer.step()
+    
+    print ('训练集MSE = {:g}, 验证集MSE = {:g}'.format(loss_train, loss_validate))
+    
+    outputs = net(features)
+    preds = outputs.squeeze()
+    loss = criterion(preds[-test_num:], labels[-test_num:])
+    print(loss)
+
+def p135(batch_size, num_epochs):
+    # 数据读取
+    train_dataset = torchvision.datasets.MNIST(root='./data/mnist',
+            train=True, transform=torchvision.transforms.ToTensor(),
+            download=True)
+    test_dataset = torchvision.datasets.MNIST(root='./data/mnist',
+            train=False, transform=torchvision.transforms.ToTensor(),
+            download=True)
+    
+    train_loader = torch.utils.data.DataLoader(
+            dataset=train_dataset, batch_size=batch_size)
+    test_loader = torch.utils.data.DataLoader(
+            dataset=test_dataset, batch_size=batch_size)
+    
+    # 搭建网络结构
+    class Net135(torch.nn.Module):
+        
+        def __init__(self):
+            super(Net135, self).__init__()
+            self.conv1 = torch.nn.Sequential(
+                    torch.nn.Conv2d(1, 64, kernel_size=3, padding=1),
+                    torch.nn.ReLU(),
+                    torch.nn.Conv2d(64, 128, kernel_size=3, padding=1),
+                    torch.nn.ReLU(),
+                    torch.nn.MaxPool2d(stride=2, kernel_size=2))
+            self.dense = torch.nn.Sequential(
+                    torch.nn.Linear(128 * 14 * 14, 1024),
+                    torch.nn.ReLU(),
+                    torch.nn.Dropout(p=0.5),
+                    torch.nn.Linear(1024, 10))
+            
+        def forward(self, x):
+            x = self.conv1(x)
+            x = x.view(-1, 128 * 14 * 14)
+            x = self.dense(x)
+            return x
+    
+    net = Net135()
+    
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(net.parameters()) 
+    
+    # 训练
+    for epoch in range(num_epochs):
+        for idx, (images, labels) in enumerate(train_loader):
+            optimizer.zero_grad()
+            preds = net(images)
+            loss = criterion(preds, labels)
+            loss.backward()
+            optimizer.step()
+            
+            if idx % 100 == 0:
+                print('epoch {}, batch {}, 损失 = {:g}'.format(
+                        epoch, idx, loss.item()))
+    
+    # 测试
+    correct = 0
+    total = 0
+    for images, labels in test_loader:
+        preds = net(images)
+        predicted = torch.argmax(preds, 1)
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
+        
+    accuracy = correct / total
+    print('测试数据准确率: {:.1%}'.format(accuracy))
 

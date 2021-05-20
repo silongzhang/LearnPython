@@ -3,13 +3,19 @@
 from math import pi
 import numpy as np
 import pandas as pd
+from pandas_datareader import wb
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
+import torch.nn.init as init
 import torch.optim
 import torchvision.datasets
+from torchvision.datasets import CIFAR10
 import torchvision.transforms
+import torchvision.transforms as transforms
+from torchvision.utils import save_image
 import torch.utils.data
+from torch.utils.data import DataLoader
 
 def PI(num_sample):
     sample = torch.rand(num_sample, 2)
@@ -342,4 +348,212 @@ def p135(batch_size, num_epochs):
         
     accuracy = correct / total
     print('测试数据准确率: {:.1%}'.format(accuracy))
+
+def p148(steps):
+    countries = ['BR', 'CA', 'CN', 'FR', 'DE', 'IN', 'IL', 'JP', 'SA', 'GB', 'US',]
+    dat = wb.download(indicator='NY.GDP.PCAP.KD',
+            country=countries, start=1970, end=2016)
+    df = dat.unstack().T
+    df.index = df.index.droplevel(0).astype(int)
+
+    class Net(torch.nn.Module):
+        
+        def __init__(self, input_size, hidden_size):
+            super(Net, self).__init__()
+            self.rnn = torch.nn.LSTM(input_size, hidden_size)
+            self.fc = torch.nn.Linear(hidden_size, 1)
+            
+        def forward(self, x):
+            x = x[:, :, None]
+            x, _ = self.rnn(x)
+            x = self.fc(x)
+            x = x[:, :, 0]
+            return x
+    
+    net = Net(input_size=1, hidden_size=5)
+
+    # 数据归一化
+    df_scaled = df / df.loc[2000]
+    
+    # 确定训练集和测试集
+    years = df.index
+    train_seq_len = sum((years >= 1971) & (years <= 2000))
+    test_seq_len = sum(years > 2000)
+    print ('训练集长度 = {}, 测试集长度 = {}'.format(
+            train_seq_len, test_seq_len))
+    
+    # 确定训练使用的特征和标签
+    inputs = torch.tensor(df_scaled.iloc[:-1].values, dtype=torch.float32)
+    labels = torch.tensor(df_scaled.iloc[1:].values, dtype=torch.float32)
+    
+    # 训练网络
+    criterion = torch.nn.MSELoss()
+    optimizer = torch.optim.Adam(net.parameters())
+    for step in range(steps):
+        if step:
+            optimizer.zero_grad()
+            train_loss.backward()
+            optimizer.step()
+        
+        preds = net(inputs)
+        train_preds = preds[:train_seq_len]
+        train_labels = labels[:train_seq_len]
+        train_loss = criterion(train_preds, train_labels)
+        
+        test_preds = preds[train_seq_len:]
+        test_labels = labels[train_seq_len:]
+        test_loss = criterion(test_preds, test_labels)
+        
+        if step % 500 == 0:
+            print ('第{}次迭代: loss (训练集) = {}, loss (测试集) = {}'.format(
+                    step, train_loss, test_loss))
+
+    preds = net(inputs)
+    df_pred_scaled = pd.DataFrame(preds.detach().numpy(),
+            index=years[1:], columns=df.columns)
+    df_pred = df_pred_scaled * df.loc[2000]
+    print(df_pred.loc[2001:])
+
+def p162(epoch_num):
+    dataset = CIFAR10(root='./data', download=True,
+            transform=transforms.ToTensor())
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+
+    # 搭建生成网络
+    latent_size = 64 # 潜在大小
+    n_channel = 3 # 输出通道数
+    n_g_feature = 64 # 生成网络隐藏层大小
+    gnet = nn.Sequential( 
+            # 输入大小 = (64, 1, 1)
+            nn.ConvTranspose2d(latent_size, 4 * n_g_feature, kernel_size=4,
+                    bias=False),
+            nn.BatchNorm2d(4 * n_g_feature),
+            nn.ReLU(),
+            # 大小 = (256, 4, 4)
+            nn.ConvTranspose2d(4 * n_g_feature, 2 * n_g_feature, kernel_size=4,
+                    stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(2 * n_g_feature),
+            nn.ReLU(),
+            # 大小 = (128, 8, 8)
+            nn.ConvTranspose2d(2 * n_g_feature, n_g_feature, kernel_size=4,
+                    stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(n_g_feature),
+            nn.ReLU(),
+            # 大小 = (64, 16, 16)
+            nn.ConvTranspose2d(n_g_feature, n_channel, kernel_size=4,
+                    stride=2, padding=1),
+            nn.Sigmoid(),
+            # 图片大小 = (3, 32, 32)
+            )
+    print (gnet)
+    
+    # 搭建鉴别网络
+    n_d_feature = 64 # 鉴别网络隐藏层大小
+    dnet = nn.Sequential( 
+            # 图片大小 = (3, 32, 32)
+            nn.Conv2d(n_channel, n_d_feature, kernel_size=4,
+                    stride=2, padding=1),
+            nn.LeakyReLU(0.2),
+            # 大小 = (64, 16, 16)
+            nn.Conv2d(n_d_feature, 2 * n_d_feature, kernel_size=4,
+                    stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(2 * n_d_feature),
+            nn.LeakyReLU(0.2),
+            # 大小 = (128, 8, 8)
+            nn.Conv2d(2 * n_d_feature, 4 * n_d_feature, kernel_size=4,
+                    stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(4 * n_d_feature),
+            nn.LeakyReLU(0.2),
+            # 大小 = (256, 4, 4)
+            nn.Conv2d(4 * n_d_feature, 1, kernel_size=4),
+            # 对数赔率张量大小 = (1, 1, 1)
+            )
+    print(dnet)
+
+    def weights_init(m): # 用于初始化权重值的函数
+        if type(m) in [nn.ConvTranspose2d, nn.Conv2d]:
+            init.xavier_normal_(m.weight)
+        elif type(m) == nn.BatchNorm2d:
+            init.normal_(m.weight, 1.0, 0.02)
+            init.constant_(m.bias, 0)
+    
+    gnet.apply(weights_init)
+    dnet.apply(weights_init)
+
+    # 损失
+    criterion = nn.BCEWithLogitsLoss()
+    
+    # 优化器
+    goptimizer = torch.optim.Adam(gnet.parameters(),
+            lr=0.0002, betas=(0.5, 0.999))
+    doptimizer = torch.optim.Adam(dnet.parameters(), 
+            lr=0.0002, betas=(0.5, 0.999))
+    
+    # 用于测试的固定噪声,用来查看相同的潜在张量在训练过程中生成图片的变换
+    batch_size = 64
+    fixed_noises = torch.randn(batch_size, latent_size, 1, 1)
+    
+    # 训练过程
+    for epoch in range(epoch_num):
+        for batch_idx, data in enumerate(dataloader):
+            # 载入本批次数据
+            real_images, _ = data
+            batch_size = real_images.size(0)
+            
+            # 训练鉴别网络
+            labels = torch.ones(batch_size) # 真实数据对应标签为1
+            preds = dnet(real_images) # 对真实数据进行判别
+            outputs = preds.reshape(-1)
+            dloss_real = criterion(outputs, labels) # 真实数据的鉴别器损失
+#            dmean_real = outputs.sigmoid().mean()
+            dmean_real = (outputs.sigmoid() >= 0.5).float().mean()
+                    # 计算鉴别器将多少比例的真数据判定为真,仅用于输出显示
+            
+            noises = torch.randn(batch_size, latent_size, 1, 1) # 潜在噪声
+            fake_images = gnet(noises) # 生成假数据
+            labels = torch.zeros(batch_size) # 假数据对应标签为0
+            fake = fake_images.detach()
+                    # 使得梯度的计算不回溯到生成网络,可用于加快训练速度.删去此步结果不变
+            preds = dnet(fake) # 对假数据进行鉴别
+            outputs = preds.view(-1)
+            dloss_fake = criterion(outputs, labels) # 假数据的鉴别器损失
+#            dmean_fake = outputs.sigmoid().mean()
+            dmean_fake = (outputs.sigmoid() >= 0.5).float().mean()
+                    # 计算鉴别器将多少比例的假数据判定为真,仅用于输出显示
+            
+            dloss = dloss_real + dloss_fake # 总的鉴别器损失
+            dnet.zero_grad()
+            dloss.backward()
+            doptimizer.step()
+            
+            # 训练生成网络
+            labels = torch.ones(batch_size)
+                    # 生成网络希望所有生成的数据都被认为是真数据
+            preds = dnet(fake_images) # 把假数据通过鉴别网络
+            outputs = preds.view(-1)
+            gloss = criterion(outputs, labels) # 真数据看到的损失
+#            gmean_fake = outputs.sigmoid().mean()
+            gmean_fake = (outputs.sigmoid() >= 0.5).float().mean()
+                    # 计算鉴别器将多少比例的假数据判定为真,仅用于输出显示
+            gnet.zero_grad()
+            gloss.backward()
+            goptimizer.step()
+            
+            # 输出本步训练结果
+            print('[{}/{}]'.format(epoch, epoch_num) +
+                    '[{}/{}]'.format(batch_idx, len(dataloader)) +
+                    '鉴别网络损失:{:g} 生成网络损失:{:g}'.format(dloss, gloss) +
+                    '真数据判真比例:{:g} 假数据判真比例:{:g}/{:g}'.format(
+                    dmean_real, dmean_fake, gmean_fake))
+            if batch_idx % 100 == 0:
+                fake = gnet(fixed_noises) # 由固定潜在张量生成假数据
+                save_image(fake, # 保存假数据
+                        './data/cifar-10/images_epoch{:02d}_batch{:03d}.png'.format(
+                        epoch, batch_idx))
+
+
+
+
+p162(10)
+
 

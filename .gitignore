@@ -9,3 +9,5 @@ Release
 *.ilk
 *.pdb
 __pycache__
+data
+logs
